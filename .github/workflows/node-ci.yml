@@ -1,0 +1,66 @@
+# Reusable workflow: kiểm tra chất lượng cho repo Node/TypeScript.
+# Repo gọi:  jobs.ci.uses: ol-company/ol-build-tooling/.github/workflows/node-ci.yml@vX
+# Tên check hiển thị trên PR: "<job gọi> / quality" — dùng tên này trong ruleset required_status_checks.
+name: node-ci
+
+on:
+  workflow_call:
+    inputs:
+      run-tests:
+        description: Chạy unit + integration test (integration cần Docker — runner ubuntu có sẵn)
+        type: boolean
+        default: true
+
+permissions: {}
+
+jobs:
+  quality:
+    name: quality
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      contents: read # Đọc source
+      packages: read # Cài @ol-company/node-kit từ GitHub Packages
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false # Không để token trong .git/config cho các bước sau
+
+      - name: Cài pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Cài Node theo .node-version
+        uses: actions/setup-node@v5
+        with:
+          node-version-file: .node-version
+          cache: pnpm # Cache store pnpm theo pnpm-lock.yaml
+
+      - name: Cài dependency (đúng lockfile)
+        run: pnpm install --frozen-lockfile # Lockfile lệch package.json → lỗi ngay
+        env:
+          NODE_AUTH_TOKEN: ${{ github.token }}
+
+      - name: Định dạng (Prettier)
+        run: pnpm run format
+
+      - name: Lint (ESLint)
+        run: pnpm run lint
+
+      - name: Kiểm tra kiểu (tsc)
+        run: pnpm run typecheck
+
+      - name: Test + coverage
+        if: inputs.run-tests
+        run: pnpm run test:coverage
+
+      - name: Lưu báo cáo coverage
+        if: inputs.run-tests && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage/
+          retention-days: 14
+          if-no-files-found: ignore

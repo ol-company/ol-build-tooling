@@ -1,0 +1,46 @@
+# Reusable workflow: phát hành phiên bản theo Conventional Commits bằng release-please.
+# Khi có commit feat/fix trên main → mở "release PR" cập nhật CHANGELOG + version.
+# Merge release PR → tạo tag vX.Y.Z + GitHub Release. Tag được ruleset bảo vệ (không sửa/xóa được).
+name: release
+
+on:
+  workflow_call:
+    inputs:
+      release-type:
+        description: node (repo có package.json) hoặc simple (repo không có package.json — dùng version.txt)
+        type: string
+        default: node
+    outputs:
+      release-created:
+        value: ${{ jobs.release.outputs.release-created }}
+      tag:
+        value: ${{ jobs.release.outputs.tag }}
+      version:
+        value: ${{ jobs.release.outputs.version }}
+
+permissions: {}
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      release-created: ${{ steps.rp.outputs.release_created }}
+      tag: ${{ steps.rp.outputs.tag_name }}
+      version: ${{ steps.rp.outputs.version }}
+    steps:
+      # Dùng GitHub App vì GITHUB_TOKEN bị chặn tạo PR (cài đặt org) và PR do GITHUB_TOKEN tạo không kích hoạt CI
+      - id: app
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.OL_APP_ID }}
+          private-key: ${{ secrets.OL_APP_PRIVATE_KEY }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-pull-requests: write
+      - id: rp
+        uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ steps.app.outputs.token }}
+          release-type: ${{ inputs.release-type }}

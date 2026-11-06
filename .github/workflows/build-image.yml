@@ -1,0 +1,307 @@
+# =============================================================================
+# Reusable workflow: BUILD IMAGE cho một module, cho một môi trường đích.
+#  1. Xác định phiên bản build-tooling đang chạy (chính workflow này) → Dockerfile cùng commit
+#  2. Lấy source module tại commit chỉ định
+#  3. Lấy build-config của môi trường đích từ ol-infra tại commit chỉ định
+#  4. Kiểm tra config → build → quét lỗ hổng → (push) → attestation provenance + SBOM
+# Ảnh đầu ra mang nhãn: source commit, Dockerfile commit, config commit, môi trường đích.
+# Triển khai luôn bằng DIGEST (sha256:...), không bằng tag.
+# =============================================================================
+name: build-image
+
+on:
+  workflow_call:
+    inputs:
+      module:
+        description: Tên module, khớp ol-infra/build-config/<env>/<module>.env và ECR repo ol/<module>
+        type: string
+        required: true
+      source-repository:
+        description: owner/repo chứa source (bỏ qua nếu CONTEXT=tooling hoặc infra)
+        type: string
+        required: true
+      source-ref:
+        description: Commit SHA của source
+        type: string
+        required: true
+      target-env:
+        description: dev | staging | prod
+        type: string
+        required: true
+      config-ref:
+        description: Ref của ol-infra để đọc build-config (mặc định main)
+        type: string
+        default: main
+      push:
+        description: false = chỉ build + quét (dùng cho PR)
+        type: boolean
+        default: true
+      version:
+        description: Phiên bản ứng dụng ghi vào nhãn image
+        type: string
+        default: 0.0.0
+      update-infra-env:
+        description: Nếu khác rỗng → mở PR ở ol-infra cập nhật deploy/<env>/<module>.yaml bằng digest mới
+        type: string
+        default: ''
+    outputs:
+      image:
+        value: ${{ jobs.build.outputs.image }}
+      digest:
+        value: ${{ jobs.build.outputs.digest }}
+      config-sha:
+        value: ${{ jobs.build.outputs.config-sha }}
+      tooling-sha:
+        value: ${{ jobs.build.outputs.tooling-sha }}
+
+permissions: {}
+
+jobs:
+  build:
+    name: build-${{ inputs.module }}-${{ inputs.target-env }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read # Đọc @ol-company/node-kit khi build
+      id-token: write # OIDC: đổi lấy role AWS + đọc job_workflow_sha
+      attestations: write # Ghi attestation provenance/SBOM
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+      digest: ${{ steps.push.outputs.digest }}
+      config-sha: ${{ steps.infra.outputs.sha }}
+      tooling-sha: ${{ steps.self.outputs.sha }}
+    steps:
+      - name: Kiểm tra input
+        env:
+          TARGET_ENV: ${{ inputs.target-env }}
+          MODULE: ${{ inputs.module }}
+          SOURCE_REF: ${{ inputs.source-ref }}
+        run: |
+          [[ "$TARGET_ENV" =~ ^(dev|staging|prod)$ ]] || { echo "target-env không hợp lệ"; exit 1; }
+          [[ "$MODULE" =~ ^[a-z0-9-]+$ ]] || { echo "module không hợp lệ"; exit 1; }
+          [[ "$SOURCE_REF" =~ ^[0-9a-f]{40}$ ]] || { echo "source-ref phải là commit SHA đầy đủ"; exit 1; }
+
+      # Workflow này có thể được gọi ở @v1.4.0, @main hoặc @<sha>. Claim job_workflow_sha trong token OIDC
+      # cho biết CHÍNH XÁC commit của ol-build-tooling đang chạy → checkout đúng Dockerfile cùng commit.
+      - name: Xác định commit build-tooling đang chạy
+        id: self
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const token = await core.getIDToken('ol-build');
+            const claims = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString());
+            core.setOutput('sha', claims.job_workflow_sha);
+            core.setOutput('ref', claims.job_workflow_ref);
+            core.info(`build-tooling: ${claims.job_workflow_ref} @ ${claims.job_workflow_sha}`);
+
+      - name: Tên repo source (bỏ phần owner)
+        id: src
+        env:
+          SOURCE_REPOSITORY: ${{ inputs.source-repository }}
+        run: echo "name=${SOURCE_REPOSITORY#*/}" >> "$GITHUB_OUTPUT"
+
+      - name: Token GitHub App (chỉ đọc nội dung các repo cần)
+        id: app
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.OL_APP_ID }}
+          private-key: ${{ secrets.OL_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ol-build-tooling,ol-infra,${{ steps.src.outputs.name }}
+          permission-contents: read
+
+      - name: Checkout ol-build-tooling (đúng commit đang chạy)
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ github.repository_owner }}/ol-build-tooling
+          ref: ${{ steps.self.outputs.sha }}
+          path: tooling
+          token: ${{ steps.app.outputs.token }}
+          persist-credentials: false
+
+      - name: Checkout ol-infra (build-config)
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ github.repository_owner }}/ol-infra
+          ref: ${{ inputs.config-ref }}
+          path: infra
+          token: ${{ steps.app.outputs.token }}
+          persist-credentials: false
+
+      - name: Ghi lại commit của config
+        id: infra
+        run: echo "sha=$(git -C infra rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Kiểm tra build-config
+        id: cfg
+        env:
+          CFG: infra/build-config/${{ inputs.target-env }}/${{ inputs.module }}.env
+        run: |
+          bash tooling/scripts/validate-build-config.sh "$CFG" > build-config.validated
+          # Tách DOCKERFILE/CONTEXT ra output, BUILD_ARG_* thành danh sách build-args
+          {
+            echo "dockerfile=$(grep '^DOCKERFILE=' build-config.validated | cut -d= -f2-)"
+            echo "context=$(grep '^CONTEXT=' build-config.validated | cut -d= -f2-)"
+            echo "infra-path=$(grep '^INFRA_CONTEXT_PATH=' build-config.validated | cut -d= -f2- || true)"
+            echo "target=$(grep '^BUILD_TARGET=' build-config.validated | cut -d= -f2- || true)"
+            echo 'build-args<<EOF'
+            grep '^BUILD_ARG_' build-config.validated | sed 's/^BUILD_ARG_//' || true
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+          [[ -d "tooling/dockerfiles/$(grep '^DOCKERFILE=' build-config.validated | cut -d= -f2-)" ]] || { echo "Dockerfile không tồn tại trong build-tooling"; exit 1; }
+
+      - name: Checkout source
+        if: steps.cfg.outputs.context == 'source'
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ inputs.source-repository }}
+          ref: ${{ inputs.source-ref }}
+          path: src
+          token: ${{ steps.app.outputs.token }}
+          persist-credentials: false
+
+      - name: Chọn build context
+        id: ctx
+        env:
+          CONTEXT: ${{ steps.cfg.outputs.context }}
+          DOCKERFILE: ${{ steps.cfg.outputs.dockerfile }}
+          INFRA_PATH: ${{ steps.cfg.outputs.infra-path }}
+        run: |
+          case "$CONTEXT" in
+            source)  echo "path=src" >> "$GITHUB_OUTPUT" ;;
+            tooling) echo "path=tooling/dockerfiles/$DOCKERFILE" >> "$GITHUB_OUTPUT" ;;
+            infra)   [[ "$INFRA_PATH" =~ ^[a-z0-9/_-]+$ ]] || exit 1; echo "path=infra/$INFRA_PATH" >> "$GITHUB_OUTPUT" ;;
+            *) echo "CONTEXT không hợp lệ: $CONTEXT"; exit 1 ;;
+          esac
+
+      - name: Metadata
+        id: meta
+        env:
+          REGISTRY: ${{ vars.SHARED_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com
+          MODULE: ${{ inputs.module }}
+          TARGET_ENV: ${{ inputs.target-env }}
+          SOURCE_REF: ${{ inputs.source-ref }}
+          CONFIG_SHA: ${{ steps.infra.outputs.sha }}
+        run: |
+          image="$REGISTRY/ol/$MODULE"
+          # Tag chỉ để người đọc; triển khai dùng digest. Tag bất biến (ECR IMMUTABLE) → không ghi đè được
+          tag="${TARGET_ENV}-${SOURCE_REF:0:12}-${CONFIG_SHA:0:7}-${GITHUB_RUN_ID}"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          echo "ref=$image:$tag" >> "$GITHUB_OUTPUT"
+          echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Đăng nhập AWS (OIDC, không có access key)
+        if: inputs.push
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.SHARED_ACCOUNT_ID }}:role/ol-gha-ecr-push
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Đăng nhập ECR
+        if: inputs.push
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build (chưa push)
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ steps.ctx.outputs.path }}
+          file: tooling/dockerfiles/${{ steps.cfg.outputs.dockerfile }}/Dockerfile
+          target: ${{ steps.cfg.outputs.target }}
+          build-contexts: |
+            tooling=tooling/dockerfiles/${{ steps.cfg.outputs.dockerfile }}
+          build-args: |
+            ${{ steps.cfg.outputs.build-args }}
+            SOURCE_REPOSITORY=${{ inputs.source-repository }}
+            SOURCE_REVISION=${{ inputs.source-ref }}
+            VERSION=${{ inputs.version }}
+            DOCKERFILE_REF=${{ steps.self.outputs.sha }}
+            CONFIG_REF=${{ steps.infra.outputs.sha }}
+            TARGET_ENV=${{ inputs.target-env }}
+            BUILD_DATE=${{ steps.meta.outputs.date }}
+          # BuildKit secret: token chỉ có trong lệnh RUN cần nó, không nằm trong image/layer/history
+          secrets: |
+            npm_token=${{ github.token }}
+          tags: ${{ steps.meta.outputs.ref }}
+          load: true
+          push: false
+          provenance: false
+          cache-from: type=gha,scope=${{ inputs.module }}-${{ inputs.target-env }}
+          cache-to: type=gha,mode=max,scope=${{ inputs.module }}-${{ inputs.target-env }}
+
+      - name: Lấy phiên bản công cụ
+        run: cat tooling/tool-versions.env >> "$GITHUB_ENV"
+
+      - name: Quét lỗ hổng image (Trivy) — chặn nếu có CRITICAL đã có bản vá
+        env:
+          REF: ${{ steps.meta.outputs.ref }}
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD:/out" "$TRIVY_IMAGE" image \
+            --severity CRITICAL --ignore-unfixed --exit-code 1 --no-progress "$REF"
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD:/out" "$TRIVY_IMAGE" image \
+            --format cyclonedx --output /out/sbom.cdx.json --no-progress "$REF"
+
+      - name: Lưu SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ inputs.module }}-${{ inputs.target-env }}
+          path: sbom.cdx.json
+          retention-days: 90
+
+      - name: Push và lấy digest
+        id: push
+        if: inputs.push
+        env:
+          REF: ${{ steps.meta.outputs.ref }}
+        run: |
+          docker push "$REF"
+          digest=$(docker inspect --format '{{index .RepoDigests 0}}' "$REF" | cut -d@ -f2)
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "Không đọc được digest"; exit 1; }
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "### Image ${{ inputs.module }} (${{ inputs.target-env }})" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`${REF%%:*}@$digest\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Attestation nguồn gốc build (SLSA provenance)
+        if: inputs.push
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ steps.meta.outputs.image }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+
+      - name: Attestation SBOM
+        if: inputs.push
+        uses: actions/attest-sbom@v2
+        with:
+          subject-name: ${{ steps.meta.outputs.image }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          sbom-path: sbom.cdx.json
+
+      # ---- Cập nhật môi trường: không deploy trực tiếp, mà mở PR ở ol-infra (GitOps) ----
+      - name: Token GitHub App (ghi ol-infra)
+        id: infra-app
+        if: inputs.push && inputs.update-infra-env != ''
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.OL_APP_ID }}
+          private-key: ${{ secrets.OL_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ol-infra
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Mở PR cập nhật digest
+        if: inputs.push && inputs.update-infra-env != ''
+        env:
+          GH_TOKEN: ${{ steps.infra-app.outputs.token }}
+          OWNER: ${{ github.repository_owner }}
+          MODULE: ${{ inputs.module }}
+          DEPLOY_ENV: ${{ inputs.update-infra-env }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+          SOURCE_REPOSITORY: ${{ inputs.source-repository }}
+          SOURCE_REF: ${{ inputs.source-ref }}
+          CONFIG_SHA: ${{ steps.infra.outputs.sha }}
+          TOOLING_SHA: ${{ steps.self.outputs.sha }}
+          VERSION: ${{ inputs.version }}
+        run: bash tooling/scripts/open-deploy-pr.sh

@@ -32,7 +32,7 @@ jobs:
     steps:
       # Dùng GitHub App vì GITHUB_TOKEN bị chặn tạo PR (cài đặt org) và PR do GITHUB_TOKEN tạo không kích hoạt CI
       - id: app
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
         with:
           app-id: ${{ vars.OL_APP_ID }}
           private-key: ${{ secrets.OL_APP_PRIVATE_KEY }}
@@ -40,7 +40,7 @@ jobs:
           permission-contents: write
           permission-pull-requests: write
       - id: rp
-        uses: googleapis/release-please-action@v4
+        uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4
         with:
           token: ${{ steps.app.outputs.token }}
           release-type: ${{ inputs.release-type }}

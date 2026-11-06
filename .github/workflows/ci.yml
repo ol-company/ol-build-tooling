@@ -1,0 +1,92 @@
+# CI của chính ol-build-tooling: lint workflow, Dockerfile, shell script; build thử mọi Dockerfile.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions: {}
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: actionlint (workflow YAML)
+        run: |
+          source tool-versions.env
+          docker run --rm -v "$PWD:/repo" -w /repo "$ACTIONLINT_IMAGE" -color
+      - name: hadolint (Dockerfile)
+        run: |
+          source tool-versions.env
+          for f in dockerfiles/*/Dockerfile; do
+            echo "== $f"; docker run --rm -i "$HADOLINT_IMAGE" hadolint --failure-threshold error - < "$f"
+          done
+      - name: shellcheck
+        run: shellcheck scripts/*.sh dockerfiles/web-static/*.sh
+      - name: Test validate-build-config
+        run: |
+          printf 'DOCKERFILE=node-service\nCONTEXT=source\nBUILD_ARG_BASE_IMAGE=node:26-slim\n' > ok.env
+          bash scripts/validate-build-config.sh ok.env
+          printf 'DOCKERFILE=node-service\nCONTEXT=source\nBUILD_ARG_NPM_TOKEN=abc\n' > bad.env
+          if bash scripts/validate-build-config.sh bad.env; then echo "Phải từ chối khóa giống bí mật"; exit 1; fi
+
+  build-keycloak:
+    name: build-keycloak
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: dockerfiles/keycloak
+          push: false
+
+  security:
+    uses: ./.github/workflows/security-scan.yml
+    with:
+      codeql-languages: ''
+    permissions:
+      contents: read
+      security-events: write
+      packages: read
+      pull-requests: write
+
+  release:
+    if: github.event_name == 'push'
+    needs: [lint, build-keycloak, security]
+    uses: ./.github/workflows/release.yml
+    with:
+      release-type: simple
+    secrets: inherit
+    permissions:
+      contents: read
+
+  # Module "keycloak" có source chính là repo này (Dockerfile + context trong dockerfiles/keycloak)
+  build-keycloak-image:
+    if: github.event_name == 'push'
+    needs: [release]
+    uses: ./.github/workflows/build-image.yml
+    with:
+      module: keycloak
+      source-repository: ${{ github.repository }}
+      source-ref: ${{ github.sha }}
+      target-env: dev
+      update-infra-env: dev # Mở PR cập nhật deploy/dev/<module>.yaml, tự merge khi check xanh
+      version: ${{ needs.release.outputs.version || '0.0.0' }}
+    secrets: inherit
+    permissions:
+      contents: read
+      packages: read
+      id-token: write
+      attestations: write

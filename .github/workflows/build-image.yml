@@ -86,7 +86,7 @@ jobs:
       # cho biết CHÍNH XÁC commit của ol-build-tooling đang chạy → checkout đúng Dockerfile cùng commit.
       - name: Xác định commit build-tooling đang chạy
         id: self
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         with:
           script: |
             const token = await core.getIDToken('ol-build');
@@ -103,7 +103,7 @@ jobs:
 
       - name: Token GitHub App (chỉ đọc nội dung các repo cần)
         id: app
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
         with:
           app-id: ${{ vars.OL_APP_ID }}
           private-key: ${{ secrets.OL_APP_PRIVATE_KEY }}
@@ -112,7 +112,7 @@ jobs:
           permission-contents: read
 
       - name: Checkout ol-build-tooling (đúng commit đang chạy)
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           repository: ${{ github.repository_owner }}/ol-build-tooling
           ref: ${{ steps.self.outputs.sha }}
@@ -121,7 +121,7 @@ jobs:
           persist-credentials: false
 
       - name: Checkout ol-infra (build-config)
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           repository: ${{ github.repository_owner }}/ol-infra
           ref: ${{ inputs.config-ref }}
@@ -153,7 +153,7 @@ jobs:
 
       - name: Checkout source
         if: steps.cfg.outputs.context == 'source'
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           repository: ${{ inputs.source-repository }}
           ref: ${{ inputs.source-ref }}
@@ -187,25 +187,27 @@ jobs:
           image="$REGISTRY/ol/$MODULE"
           # Tag chỉ để người đọc; triển khai dùng digest. Tag bất biến (ECR IMMUTABLE) → không ghi đè được
           tag="${TARGET_ENV}-${SOURCE_REF:0:12}-${CONFIG_SHA:0:7}-${GITHUB_RUN_ID}"
-          echo "image=$image" >> "$GITHUB_OUTPUT"
-          echo "ref=$image:$tag" >> "$GITHUB_OUTPUT"
-          echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+          {
+            echo "image=$image"
+            echo "ref=$image:$tag"
+            echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } >> "$GITHUB_OUTPUT"
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Đăng nhập AWS (OIDC, không có access key)
         if: inputs.push
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
         with:
           role-to-assume: arn:aws:iam::${{ vars.SHARED_ACCOUNT_ID }}:role/ol-gha-ecr-push
           aws-region: ${{ vars.AWS_REGION }}
 
       - name: Đăng nhập ECR
         if: inputs.push
-        uses: aws-actions/amazon-ecr-login@v2
+        uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2
 
       - name: Build (chưa push)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: ${{ steps.ctx.outputs.path }}
           file: tooling/dockerfiles/${{ steps.cfg.outputs.dockerfile }}/Dockerfile
@@ -244,7 +246,7 @@ jobs:
             --format cyclonedx --output /out/sbom.cdx.json --no-progress "$REF"
 
       - name: Lưu SBOM
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: sbom-${{ inputs.module }}-${{ inputs.target-env }}
           path: sbom.cdx.json
@@ -265,14 +267,14 @@ jobs:
 
       - name: Attestation nguồn gốc build (SLSA provenance)
         if: inputs.push
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
           subject-name: ${{ steps.meta.outputs.image }}
           subject-digest: ${{ steps.push.outputs.digest }}
 
       - name: Attestation SBOM
         if: inputs.push
-        uses: actions/attest-sbom@v2
+        uses: actions/attest-sbom@bd218ad0dbcb3e146bd073d1d9c6d78e08aa8a0b # v2
         with:
           subject-name: ${{ steps.meta.outputs.image }}
           subject-digest: ${{ steps.push.outputs.digest }}
@@ -282,7 +284,7 @@ jobs:
       - name: Token GitHub App (ghi ol-infra)
         id: infra-app
         if: inputs.push && inputs.update-infra-env != ''
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
         with:
           app-id: ${{ vars.OL_APP_ID }}
           private-key: ${{ secrets.OL_APP_PRIVATE_KEY }}

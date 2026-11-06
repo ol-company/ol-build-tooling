@@ -20,3 +20,5 @@ COPY realm-ol.yaml /config/realm-ol.yaml
 ENV IMPORT_FILES_LOCATIONS=/config/realm-ol.yaml \
     IMPORT_VARSUBSTITUTION_ENABLED=true \
     IMPORT_MANAGED_CLIENT=no-delete
+# Image gốc đã chạy bằng nobody (65534); khai báo tường minh để không phụ thuộc mặc định của image gốc
+USER 65534:65534

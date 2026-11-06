@@ -86,7 +86,7 @@ jobs:
       # cho biết CHÍNH XÁC commit của ol-build-tooling đang chạy → checkout đúng Dockerfile cùng commit.
       - name: Xác định commit build-tooling đang chạy
         id: self
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const token = await core.getIDToken('ol-build');
@@ -103,7 +103,7 @@ jobs:
 
       - name: Token GitHub App (chỉ đọc nội dung các repo cần)
         id: app
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@v3
         with:
           app-id: ${{ vars.OL_APP_ID }}
           private-key: ${{ secrets.OL_APP_PRIVATE_KEY }}
@@ -112,7 +112,7 @@ jobs:
           permission-contents: read
 
       - name: Checkout ol-build-tooling (đúng commit đang chạy)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: ${{ github.repository_owner }}/ol-build-tooling
           ref: ${{ steps.self.outputs.sha }}
@@ -121,7 +121,7 @@ jobs:
           persist-credentials: false
 
       - name: Checkout ol-infra (build-config)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: ${{ github.repository_owner }}/ol-infra
           ref: ${{ inputs.config-ref }}
@@ -153,7 +153,7 @@ jobs:
 
       - name: Checkout source
         if: steps.cfg.outputs.context == 'source'
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: ${{ inputs.source-repository }}
           ref: ${{ inputs.source-ref }}
@@ -191,11 +191,11 @@ jobs:
           echo "ref=$image:$tag" >> "$GITHUB_OUTPUT"
           echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       - name: Đăng nhập AWS (OIDC, không có access key)
         if: inputs.push
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: arn:aws:iam::${{ vars.SHARED_ACCOUNT_ID }}:role/ol-gha-ecr-push
           aws-region: ${{ vars.AWS_REGION }}
@@ -205,7 +205,7 @@ jobs:
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Build (chưa push)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ${{ steps.ctx.outputs.path }}
           file: tooling/dockerfiles/${{ steps.cfg.outputs.dockerfile }}/Dockerfile
@@ -244,7 +244,7 @@ jobs:
             --format cyclonedx --output /out/sbom.cdx.json --no-progress "$REF"
 
       - name: Lưu SBOM
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sbom-${{ inputs.module }}-${{ inputs.target-env }}
           path: sbom.cdx.json
@@ -265,14 +265,14 @@ jobs:
 
       - name: Attestation nguồn gốc build (SLSA provenance)
         if: inputs.push
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-name: ${{ steps.meta.outputs.image }}
           subject-digest: ${{ steps.push.outputs.digest }}
 
       - name: Attestation SBOM
         if: inputs.push
-        uses: actions/attest-sbom@v2
+        uses: actions/attest-sbom@v4
         with:
           subject-name: ${{ steps.meta.outputs.image }}
           subject-digest: ${{ steps.push.outputs.digest }}
@@ -282,7 +282,7 @@ jobs:
       - name: Token GitHub App (ghi ol-infra)
         id: infra-app
         if: inputs.push && inputs.update-infra-env != ''
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@v3
         with:
           app-id: ${{ vars.OL_APP_ID }}
           private-key: ${{ secrets.OL_APP_PRIVATE_KEY }}

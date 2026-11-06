@@ -23,17 +23,17 @@ jobs:
       packages: read # Cài @ol-company/node-kit từ GitHub Packages
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           persist-credentials: false # Không để token trong .git/config cho các bước sau
 
       - name: Cài pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: 10
 
       - name: Cài Node theo .node-version
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v7
         with:
           node-version-file: .node-version
           cache: pnpm # Cache store pnpm theo pnpm-lock.yaml
@@ -58,7 +58,7 @@ jobs:
 
       - name: Lưu báo cáo coverage
         if: inputs.run-tests && always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage
           path: coverage/

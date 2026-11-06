@@ -22,11 +22,11 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0 # Quét toàn bộ lịch sử, không chỉ commit cuối
           persist-credentials: false
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           repository: ${{ github.repository_owner }}/ol-build-tooling
           path: .tooling
@@ -46,7 +46,7 @@ jobs:
       security-events: write # Đẩy kết quả lên tab Security
       packages: read
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - uses: github/codeql-action/init@v3
@@ -61,10 +61,10 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           repository: ${{ github.repository_owner }}/ol-build-tooling
           path: .tooling
@@ -86,7 +86,7 @@ jobs:
       contents: read
       pull-requests: write # Ghi bình luận tóm tắt vào PR
     steps:
-      - uses: actions/dependency-review-action@v4
+      - uses: actions/dependency-review-action@v5
         with:
           fail-on-severity: high
           deny-licenses: AGPL-3.0, GPL-3.0

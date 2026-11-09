@@ -9,7 +9,6 @@ ARG BASE_IMAGE=node:26-slim
 
 # ---------- base: Node + pnpm ----------
 FROM ${BASE_IMAGE} AS base
-# Node 25+ không còn kèm Corepack → cài pnpm trực tiếp, pin major
 RUN npm install -g pnpm@10 --no-fund --no-audit && npm cache clean --force
 ENV PNPM_HOME=/pnpm CI=true
 WORKDIR /app

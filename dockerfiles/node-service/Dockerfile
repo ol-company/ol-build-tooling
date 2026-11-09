@@ -18,6 +18,7 @@ WORKDIR /app
 FROM base AS deps
 # Chỉ copy file manifest trước → layer này được cache khi chỉ sửa code
 COPY package.json pnpm-lock.yaml .npmrc ./
+RUN printf '%s\n' '//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}' > /root/.npmrc
 # secret mount: token chỉ tồn tại trong lệnh RUN này; cache mount: tái dùng store pnpm giữa các lần build
 RUN --mount=type=secret,id=npm_token,env=NODE_AUTH_TOKEN \
     --mount=type=cache,id=pnpm-store,target=/pnpm/store \

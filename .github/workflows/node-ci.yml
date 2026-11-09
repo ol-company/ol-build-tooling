@@ -37,6 +37,8 @@ jobs:
         with:
           node-version-file: .node-version
           cache: pnpm # Cache store pnpm theo pnpm-lock.yaml
+          registry-url: https://npm.pkg.github.com
+          scope: "@ol-company"
 
       - name: Cài dependency (đúng lockfile)
         run: pnpm install --frozen-lockfile # Lockfile lệch package.json → lỗi ngay

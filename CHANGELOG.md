@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.1](https://github.com/ol-company/ol-build-tooling/compare/v1.0.0...v1.0.1) (2026-11-09)
+
+
+### Bug Fixes
+
+* **node-service:** cấu hình xác thực GitHub Packages cho scope [@ol-company](https://github.com/ol-company) ([#9](https://github.com/ol-company/ol-build-tooling/issues/9)) ([73a19a7](https://github.com/ol-company/ol-build-tooling/commit/73a19a7116f12666dff5eed744357bd29297e518))
+
 ## 1.0.0 (2026-11-06)
 
 

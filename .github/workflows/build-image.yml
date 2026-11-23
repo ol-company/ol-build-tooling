@@ -103,7 +103,7 @@ jobs:
 
       - name: Token GitHub App (chỉ đọc nội dung các repo cần)
         id: app
-        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
         with:
           app-id: ${{ vars.OL_APP_ID }}
           private-key: ${{ secrets.OL_APP_PRIVATE_KEY }}
@@ -204,7 +204,7 @@ jobs:
 
       - name: Đăng nhập ECR
         if: inputs.push
-        uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2
+        uses: aws-actions/amazon-ecr-login@7290e214a610b32bc0eef81748948b6d466a8783 # v2
 
       - name: Build (chưa push)
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
@@ -284,7 +284,7 @@ jobs:
       - name: Token GitHub App (ghi ol-infra)
         id: infra-app
         if: inputs.push && inputs.update-infra-env != ''
-        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
         with:
           app-id: ${{ vars.OL_APP_ID }}
           private-key: ${{ secrets.OL_APP_PRIVATE_KEY }}
